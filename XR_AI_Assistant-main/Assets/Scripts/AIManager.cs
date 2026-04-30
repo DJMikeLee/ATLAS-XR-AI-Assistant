@@ -21,7 +21,7 @@ public class AIManager : MonoBehaviour
     private string geminiApiKey;
 
     [Tooltip("The AI will automatically rotate through these models if one hits a quota limit (429) or is retired (404).")]
-    public string[] fallbackModels = new string[] { "gemini-2.5-flash", "gemini-3-flash", "gemini-2.5-flash-lite" };
+    public string[] fallbackModels = new string[] { "gemini-2.5-flash", "gemini-3.0-flash", "gemini-2.5-flash-lite" };
     private int currentModelIndex = 0;
 
     [Tooltip("Check this to allow the AI to search the live internet for answers")]
@@ -436,7 +436,7 @@ public class AIManager : MonoBehaviour
             }
             else
             {
-                if (request.responseCode == 429 || request.responseCode == 404)
+                if (request.responseCode == 429 || request.responseCode == 404 || request.responseCode == 503 || request.responseCode == 500)
                 {
                     if (retryCount < fallbackModels.Length - 1)
                     {

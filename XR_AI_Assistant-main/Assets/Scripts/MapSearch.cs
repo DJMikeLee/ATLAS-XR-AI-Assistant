@@ -329,87 +329,113 @@ public class MapSearch : MonoBehaviour
             "IMPORTANT CONTEXT: Prioritize University of Illinois Urbana-Champaign (UIUC) locations. " +
             "Respond ONLY in this exact format: LAT: [latitude], LON: [longitude].";
 
-        string targetModel = aiManager.fallbackModels[0];
-        string url = $"https://generativelanguage.googleapis.com/v1beta/models/{targetModel}:generateContent?key={geminiApiKey}";
-
         string escapedQuery = query.Replace("\\", "\\\\").Replace("\"", "\\\"");
         string escapedPrompt = systemPrompt.Replace("\\", "\\\\").Replace("\"", "\\\"");
 
         string jsonPayload = $@"
-{{
-  ""system_instruction"": {{
-    ""parts"": [{{ ""text"": ""{escapedPrompt}"" }}]
-  }},
-  ""contents"": [
     {{
-      ""parts"": [{{ ""text"": ""Location: {escapedQuery}"" }}]
-    }}
-  ],
-  ""tools"": [
-    {{ ""google_search"": {{}} }}
-  ]
-}}";
+      ""system_instruction"": {{
+        ""parts"": [{{ ""text"": ""{escapedPrompt}"" }}]
+      }},
+      ""contents"": [
+        {{
+          ""parts"": [{{ ""text"": ""Location: {escapedQuery}"" }}]
+        }}
+      ],
+      ""tools"": [
+        {{ ""google_search"": {{}} }}
+      ]
+    }}";
 
-        using (UnityWebRequest request = new UnityWebRequest(url, "POST"))
+        bool requestSuccessful = false;
+
+        // --- THE FIX: Loop through the fallback array if the server is busy ---
+        for (int i = 0; i < aiManager.fallbackModels.Length; i++)
         {
-            byte[] bodyRaw = System.Text.Encoding.UTF8.GetBytes(jsonPayload);
-            request.uploadHandler = new UploadHandlerRaw(bodyRaw);
-            request.downloadHandler = new DownloadHandlerBuffer();
-            request.SetRequestHeader("Content-Type", "application/json");
+            string targetModel = aiManager.fallbackModels[i];
+            string url = $"https://generativelanguage.googleapis.com/v1beta/models/{targetModel}:generateContent?key={geminiApiKey}";
 
-            yield return request.SendWebRequest();
-
-            if (request.result != UnityWebRequest.Result.Success)
+            using (UnityWebRequest request = new UnityWebRequest(url, "POST"))
             {
-                if (statusText != null)
-                    statusText.text = "<color=red>AI Network Error.</color>";
+                byte[] bodyRaw = System.Text.Encoding.UTF8.GetBytes(jsonPayload);
+                request.uploadHandler = new UploadHandlerRaw(bodyRaw);
+                request.downloadHandler = new DownloadHandlerBuffer();
+                request.SetRequestHeader("Content-Type", "application/json");
 
-                Debug.LogError("Gemini API Error: " + request.error);
-                Debug.LogError(request.downloadHandler.text);
-                yield break;
-            }
+                yield return request.SendWebRequest();
 
-            string responseJson = request.downloadHandler.text;
-            string aiText = ExtractJsonValue(responseJson, "\"text\": \"", "\"");
-            aiText = aiText.Replace("\\n", "").Trim();
-
-            Debug.Log("[Gemini Geocoder] " + aiText);
-
-            if (aiText.Contains("LAT:") && aiText.Contains("LON:"))
-            {
-                try
+                if (request.result == UnityWebRequest.Result.Success)
                 {
-                    string latPart = aiText.Substring(aiText.IndexOf("LAT:") + 4);
-                    latPart = latPart.Substring(0, latPart.IndexOf(",")).Trim();
+                    string responseJson = request.downloadHandler.text;
+                    string aiText = ExtractJsonValue(responseJson, "\"text\": \"", "\"");
+                    aiText = aiText.Replace("\\n", "").Trim();
 
-                    string lonPart = aiText.Substring(aiText.IndexOf("LON:") + 4).Trim();
+                    Debug.Log("[Gemini Geocoder] " + aiText);
 
-                    if (float.TryParse(latPart, NumberStyles.Float, CultureInfo.InvariantCulture, out float lat) &&
-                        float.TryParse(lonPart, NumberStyles.Float, CultureInfo.InvariantCulture, out float lon))
+                    if (aiText.Contains("LAT:") && aiText.Contains("LON:"))
                     {
-                        spatialAirTag.targetLat = lat;
-                        spatialAirTag.targetLon = lon;
+                        try
+                        {
+                            string latPart = aiText.Substring(aiText.IndexOf("LAT:") + 4);
+                            latPart = latPart.Substring(0, latPart.IndexOf(",")).Trim();
 
-                        if (statusText != null)
-                            statusText.text = $"<color=#00ff00>Locked on: {query}</color>";
+                            string lonPart = aiText.Substring(aiText.IndexOf("LON:") + 4).Trim();
+
+                            if (float.TryParse(latPart, NumberStyles.Float, CultureInfo.InvariantCulture, out float lat) &&
+                                float.TryParse(lonPart, NumberStyles.Float, CultureInfo.InvariantCulture, out float lon))
+                            {
+                                spatialAirTag.targetLat = lat;
+                                spatialAirTag.targetLon = lon;
+
+                                if (statusText != null)
+                                    statusText.text = $"<color=#00ff00>Locked on: {query}</color>";
+
+                                requestSuccessful = true;
+                                break; // Success! Exit the loop.
+                            }
+                            else
+                            {
+                                if (statusText != null) statusText.text = "<color=red>Coordinate parse error.</color>";
+                                requestSuccessful = true;
+                                break;
+                            }
+                        }
+                        catch
+                        {
+                            if (statusText != null) statusText.text = "<color=red>Failed to read AI format.</color>";
+                            requestSuccessful = true;
+                            break;
+                        }
                     }
                     else
                     {
-                        if (statusText != null)
-                            statusText.text = "<color=red>Coordinate parse error.</color>";
+                        if (statusText != null) statusText.text = "<color=red>Location not found.</color>";
+                        requestSuccessful = true;
+                        break;
                     }
                 }
-                catch
+                else
                 {
-                    if (statusText != null)
-                        statusText.text = "<color=red>Failed to read AI format.</color>";
+                    long code = request.responseCode;
+                    // If Gemini is busy (503) or out of quota (429), log it and try the next model!
+                    if (code == 429 || code == 404 || code == 503 || code == 500)
+                    {
+                        Debug.LogWarning($"[MapSearch] Model {targetModel} failed ({code}). Swapping to next fallback...");
+                        continue; // Loop continues to the next model
+                    }
+                    else
+                    {
+                        // Fatal connection error
+                        Debug.LogError("Gemini API Error: " + request.error);
+                        break;
+                    }
                 }
             }
-            else
-            {
-                if (statusText != null)
-                    statusText.text = "<color=red>Location not found.</color>";
-            }
+        }
+
+        if (!requestSuccessful && statusText != null)
+        {
+            statusText.text = "<color=red>AI Network Error. All models failed.</color>";
         }
     }
 
