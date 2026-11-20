@@ -5,7 +5,7 @@ This standalone Unity project presents a compact heads-up display with hand gest
 ## Open the project
 
 1. Install Unity **6000.3.15f1** with Android Build Support, its SDK/NDK tools, and OpenJDK.
-2. Restore the ten packages pinned in `Assets/packages.config`. Before opening Unity, run `nugetforunity restore .` from this folder with the [NuGetForUnity CLI 4.5.0](https://github.com/GlitchEnzo/NuGetForUnity#restoring-nuget-packages-over-the-command-line). Alternatively, use **NuGet → Restore Packages** in the editor. A first import without the NuGet dependencies can show compiler errors until restore finishes.
+2. Install the [NuGetForUnity CLI 4.5.0](https://github.com/GlitchEnzo/NuGetForUnity#restoring-nuget-packages-over-the-command-line) and run `python Tools/restore_packages.py` from this folder before opening Unity. It restores the ten versions pinned in `Assets/packages.config` and applies the original Unity importer settings to the Android ARM64 speech libraries and the .NET source analyzer. If your CLI is outside PATH, supply `--cli /path/to/nugetforunity`.
 3. In Unity Hub, add this folder and open `Assets/Scenes/UI Quest Display.unity`. For a headset build, choose Android in Build Profiles. The scene is already enabled in the build settings.
 
 ## Configure optional services
